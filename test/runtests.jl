@@ -69,6 +69,47 @@ struct Uhm end
     @test repr(m, WithIOContext(u, prop = 1)) == "1"
 end
 
+@testset "Resource" begin
+    f1 = tempname() * ".js"
+    f2 = tempname() * ".jpg"
+    f3 = tempname()
+    u4 = "https://asdf.com/a/b/c.mp4?b=23f&c=asdf.png#asdfjk"
+    
+    write(f1, "asdf")
+    write(f2, "asdf")
+    write(f3, "asdf")
+    
+    
+    r1 = LocalResource(f1)
+    r2 = LocalResource(f2)
+    r3 = LocalResource(f3)
+    r4 = Resource(u4)
+    r5 = Resource(u4, :asdf => "123px")
+    
+    hr(x) = repr(MIME"text/html"(), x)
+    
+    h1 = hr(r1)
+    h2 = hr(r2)
+    h3 = hr(r3)
+    h4 = hr(r4)
+    h5 = hr(r5)
+    
+    @test occursin(r"<script.+src\=.+base64.+<\/script>", h1)
+    @test occursin(r"<img.+src=.+base64.+>", h2)
+    @test occursin(r"type=[\'\"]image/jp", h2)
+    @test occursin(r"<data.+src=.+base64.+>", h3)
+    @test !occursin(r"type=", h3)
+    @test occursin(r"<video.+src=.+>", h4)
+    @test (
+        occursin("https://asdf.com/a/b/c.mp4?b=23f&c=asdf.png", h4) ||
+        # This one is fine too, you can verify this by rendering HTML("<img src="https://asdf.com/a/b/c.mp4?b=23f&amp;c=asdf.png">") in a cell, and in the Network panel in the chrome devtools, you will see a request to https://asdf.com/a/b/c.mp4?b=23f&c=asdf.png, which is what we want.
+        occursin("https://asdf.com/a/b/c.mp4?b=23f&amp;c=asdf.png", h4)
+    )
+    @test occursin(r"asdf=[\'\"]123px", h5)
+    
+        
+end
+
 function default(x)
     new = AbstractPlutoDingetjes.Bonds.initial_value(x)
     if Core.applicable(Base.get, x)
@@ -214,6 +255,31 @@ transform(el, x) = AbstractPlutoDingetjes.Bonds.transform_value(el, x)
     @test default(el) == tan
 
 
+
+    # Downsampling Slider ranges
+    x1 = [1,2,3]
+    x2 = rand(500)
+
+    @test PlutoUI.BuiltinsNotebook.downsample(x1, 3) == x1
+    @test PlutoUI.BuiltinsNotebook.downsample(x1, 3) === x1
+    @test PlutoUI.BuiltinsNotebook.downsample(x1, 30) === x1
+    @test PlutoUI.BuiltinsNotebook.downsample(x1, 2) == [1,3]
+
+    @test PlutoUI.BuiltinsNotebook.downsample(x2, 500) == x2
+    @test PlutoUI.BuiltinsNotebook.downsample(x2, 500) === x2
+    y2 = PlutoUI.BuiltinsNotebook.downsample(x2, 400)
+    @test 250 <= length(y2) <= 400
+    @test y2[begin] == x2[begin]
+    @test y2[end] == x2[end] 
+
+    x3 = rand(50_000_000)
+    max_downsample_time = 0.001 # seconds
+    # this should take less than 0.1ms
+    @test max_downsample_time >= @elapsed PlutoUI.BuiltinsNotebook.downsample(x3, 100)
+
+
+    
+
     el = Scrubbable(60)
     @test default(el) === 60
     el = Scrubbable(60.0)
@@ -279,6 +345,15 @@ transform(el, x) = AbstractPlutoDingetjes.Bonds.transform_value(el, x)
     @test default(el) == 4:1//3:5
     el = RangeSlider(1:(1//3):10; default = 4:1//3:(17//3))
     @test default(el) == 4:1//3:(17//3)
+    
+    el = WebcamInput(; help=false)
+    @test default(el) isa Matrix{RGB{N0f8}}
+    @test size(default(el)) == (1,1)
+    
+    el = WebcamInput(; help=false, avoid_allocs=true)
+    @test !(default(el) isa Matrix{RGB{N0f8}})
+    @test default(el) isa AbstractMatrix{RGB{N0f8}}
+    @test size(default(el)) == (1,1)
 
 
     el = confirm(Slider([sin, cos]))
@@ -367,5 +442,8 @@ transform(el, x) = AbstractPlutoDingetjes.Bonds.transform_value(el, x)
     
     @test default(el) == sin
     
+    A = rand(3,2)
+    el = Scrubbable(A)
+    @test default(el) == A
 end
 
