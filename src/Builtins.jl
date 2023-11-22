@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.25
+# v0.19.32
 
 using Markdown
 using InteractiveUtils
@@ -189,9 +189,17 @@ begin
 					const input_el = currentScript.previousElementSibling
 					const output_el = currentScript.nextElementSibling
 					const displays = $(string.(slider.values))
-					
-					input_el.addEventListener("input", () => {
+
+					let update_output = () => {
 						output_el.value = displays[input_el.valueAsNumber - 1]
+					}
+					
+					input_el.addEventListener("input", update_output)
+					// We also poll for changes because the `input_el.value` can change from the outside, e.g. https://github.com/JuliaPluto/PlutoUI.jl/issues/277
+					let id = setInterval(update_output, 200)
+					invalidation.then(() => {
+						clearInterval(id)
+						input_el.removeEventListener("input", update_output)
 					})
 					</script><output style='
 						font-family: system-ui;
@@ -649,7 +657,7 @@ begin
 			"""<select>$(
 		map(enumerate(select.options)) do (i,o)
 				@htl(
-				"<option value=$(i) selected=$(!ismissing(select.default) && o.first == select.default)>$(
+				"<option value='puiselect-$(i)' selected=$(!ismissing(select.default) && o.first == select.default)>$(
 				string(o.second)
 				)</option>")
 			end
@@ -662,24 +670,33 @@ begin
 	Bonds.possible_values(select::Select) = (string(i) for i in 1:length(select.options))
 	
 	function Bonds.transform_value(select::Select, val_from_js)
-		# val_from_js will be a String, but let's allow Integers as well, there's no harm in that
-		val_num = val_from_js isa Integer ? val_from_js : tryparse(Int64, val_from_js)
-		select.options[val_num].first
+		if startswith(val_from_js, "puiselect-")
+			val_num = tryparse(Int64, @view val_from_js[begin+10:end])
+			select.options[val_num].first
+		else
+			# and OldSelect was rendered
+			val_from_js
+		end
 	end
 	
 	function Bonds.validate_value(select::Select, val_from_js)
-		# val_from_js will be a String, but let's allow Integers as well, there's no harm in that
-		val_num = val_from_js isa Integer ? val_from_js : tryparse(Int64, val_from_js)
-		val_num isa Integer && 1 <= val_num <= length(select.options)
+		(val_from_js isa String) || return false
+		if startswith(val_from_js, "puiselect-")
+			val_num = tryparse(Int64, @view val_from_js[begin+10:end])
+			val_num isa Integer && val_num ∈ eachindex(select.options)
+		else
+			# and OldSelect was rendered
+			any(key == val_from_js for (key,val) in select.options)
+		end
 	end
 	
 	result
 end
 
-# ╔═╡ d64bb805-b700-4fd6-8894-2980152ce250
+# ╔═╡ 2d8ddc76-dcd6-496a-aa4b-b6697c2fa741
 # ╠═╡ skip_as_script = true
 #=╠═╡
-Select(["a" => "✅", "b" => "🆘", "c" => "🆘"])
+se_validate_test = Select(["a" => "✅", "b" => "🆘", "c" => "🆘"])
   ╠═╡ =#
 
 # ╔═╡ 4f3ba840-28ce-4790-b929-ce6af8920189
@@ -703,7 +720,12 @@ OldSelect(["a" => "🆘", "b" => "✅", "c" => "🆘"]; default="b")
 # ╔═╡ 6459df3f-143f-4d1a-a238-4447b11cc56c
 # ╠═╡ skip_as_script = true
 #=╠═╡
-HTML(repr(MIME"text/html"(), Select(["a" => "✅", "b" => "🆘", "c" => "🆘"])))
+HTML(repr(MIME"text/html"(), @bind ose2 Select(["a" => "✅", "b" => "🆘", "c" => "🆘"])))
+  ╠═╡ =#
+
+# ╔═╡ a8ea11dd-703f-428a-9c3f-04114afcd069
+#=╠═╡
+ose2
   ╠═╡ =#
 
 # ╔═╡ f3bef89c-61ac-4dcf-bf47-3824f11db26f
@@ -1372,13 +1394,18 @@ bs
 # ╔═╡ 75b008b2-afc0-4bd5-9183-e0e0d392a4c5
 # ╠═╡ skip_as_script = true
 #=╠═╡
-@bind s2 Slider(30:.5:40; default=38, show_value=true)
+bs2 = @bind s2 Slider(30:.5:40; default=38, show_value=true)
   ╠═╡ =#
 
 # ╔═╡ 9df251eb-b4f5-46cc-a4fe-ff2fa670b773
 # ╠═╡ skip_as_script = true
 #=╠═╡
-@bind s3 Slider([sin, cos, tan], default=cos, show_value=true)
+bs3 = @bind s3 Slider([sin, cos, tan], default=cos, show_value=true)
+  ╠═╡ =#
+
+# ╔═╡ 85900f8c-a1e1-4ffe-a932-b9860749b5ec
+#=╠═╡
+bs2, bs3
   ╠═╡ =#
 
 # ╔═╡ 7c5765ae-c10a-4677-97a3-848a423cb8b9
@@ -1556,6 +1583,11 @@ bse = @bind se1 Select(["a" => "default", teststr => teststr])
 bse
   ╠═╡ =#
 
+# ╔═╡ e3369696-eeea-4010-bcf2-6033d806f10a
+#=╠═╡
+HTML(repr(MIME"text/html"(), bse))
+  ╠═╡ =#
+
 # ╔═╡ c9a291c5-b5f5-40a6-acb3-eff4882c1516
 # ╠═╡ skip_as_script = true
 #=╠═╡
@@ -1577,6 +1609,26 @@ bse
 # ╔═╡ 7f05f0b5-051e-4c75-b484-944daf8a274d
 #=╠═╡
 se1, se2, se3, se3(123), se4
+  ╠═╡ =#
+
+# ╔═╡ d64bb805-b700-4fd6-8894-2980152ce250
+#=╠═╡
+Bonds.validate_value(se_validate_test, "a")
+  ╠═╡ =#
+
+# ╔═╡ e60d8ebc-c4b9-4452-8c68-93bb905ddc4d
+#=╠═╡
+Bonds.validate_value(se_validate_test, "aa")
+  ╠═╡ =#
+
+# ╔═╡ 8953e87a-da9d-48ca-9e32-5d635fcf1fb1
+#=╠═╡
+Bonds.validate_value(se_validate_test, "puiselect-1")
+  ╠═╡ =#
+
+# ╔═╡ 19e5b312-8dd8-4dcd-bf66-d0d0078c090c
+#=╠═╡
+Bonds.validate_value(se_validate_test, "puiselect-20")
   ╠═╡ =#
 
 # ╔═╡ 294263fe-0986-4be1-bff5-cd9f7d261c09
@@ -1896,6 +1948,7 @@ export Slider, NumberField, Button, LabelButton, CounterButton, CheckBox, TextFi
 # ╠═38d32393-49be-469c-840b-b58c7339a276
 # ╠═75b008b2-afc0-4bd5-9183-e0e0d392a4c5
 # ╠═9df251eb-b4f5-46cc-a4fe-ff2fa670b773
+# ╠═85900f8c-a1e1-4ffe-a932-b9860749b5ec
 # ╠═7c5765ae-c10a-4677-97a3-848a423cb8b9
 # ╠═f70c1f7b-f3c5-4aff-b39c-add64afbd635
 # ╟─d088bcdb-d851-4ad7-b5a0-751c1f348995
@@ -1947,14 +2000,19 @@ export Slider, NumberField, Button, LabelButton, CounterButton, CheckBox, TextFi
 # ╠═d4bf5249-6027-43c5-bd20-48ad95721e27
 # ╠═d8c60294-0ca6-4cb0-b51d-9f6d6b370b28
 # ╠═fbc6e4c1-4bd8-43a2-ac82-e6f76033fd8e
-# ╟─eb4e17fd-07ba-4031-a39f-0d9fccd3d886
+# ╠═eb4e17fd-07ba-4031-a39f-0d9fccd3d886
 # ╠═57a7d0c9-2f4a-44e6-9b7a-0bbd98611c9d
 # ╠═c9a291c5-b5f5-40a6-acb3-eff4882c1516
 # ╠═9729fa52-7cff-4905-9d1c-1d0eefc8ad6e
 # ╠═d08b571c-fe08-4911-b9f3-5a1075be50ea
 # ╠═a58e383a-3837-4b4c-aa84-cf64436cd870
+# ╠═e3369696-eeea-4010-bcf2-6033d806f10a
 # ╠═7f05f0b5-051e-4c75-b484-944daf8a274d
+# ╠═2d8ddc76-dcd6-496a-aa4b-b6697c2fa741
 # ╠═d64bb805-b700-4fd6-8894-2980152ce250
+# ╠═e60d8ebc-c4b9-4452-8c68-93bb905ddc4d
+# ╠═8953e87a-da9d-48ca-9e32-5d635fcf1fb1
+# ╠═19e5b312-8dd8-4dcd-bf66-d0d0078c090c
 # ╠═4f3ba840-28ce-4790-b929-ce6af8920189
 # ╟─edfdbaee-ec31-40c2-9ad5-28250fe6b651
 # ╠═294263fe-0986-4be1-bff5-cd9f7d261c09
@@ -1963,8 +2021,9 @@ export Slider, NumberField, Button, LabelButton, CounterButton, CheckBox, TextFi
 # ╠═b34d3a01-f8d6-4586-b655-5da84d586cd5
 # ╠═609ab7f4-4fc4-4122-986d-9bfe54fa715d
 # ╠═6459df3f-143f-4d1a-a238-4447b11cc56c
+# ╠═a8ea11dd-703f-428a-9c3f-04114afcd069
 # ╠═f3bef89c-61ac-4dcf-bf47-3824f11db26f
-# ╠═42e9e5ab-7d34-4300-a6c0-47f5cde658d8
+# ╟─42e9e5ab-7d34-4300-a6c0-47f5cde658d8
 # ╠═57232d88-b74f-4823-be61-8db450c93f5c
 # ╠═04ed1e71-d806-423e-b99c-476ea702feb3
 # ╟─7c4303a1-19be-41a2-a6c7-90146e01401d
