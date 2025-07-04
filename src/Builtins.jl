@@ -1,17 +1,19 @@
 ### A Pluto.jl notebook ###
-# v0.19.38
+# v0.20.8
 
 using Markdown
 using InteractiveUtils
 
 # This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
 macro bind(def, element)
-    quote
+    #! format: off
+    return quote
         local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
         local el = $(esc(element))
         global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
         el
     end
+    #! format: on
 end
 
 # ╔═╡ 81adbd39-5780-4cc6-a53f-a4472bacf1c0
@@ -134,6 +136,8 @@ begin
 	`@bind x Slider(0.00 : 0.01 : 0.30)`
 
 	`@bind x Slider(1:10; default=8, show_value=true)`
+	
+	`@bind x Slider(range(-π, π, 1000); default=0, show_value=x-> "\$(round(x, digits=2)) rad")`
 
 	`@bind x Slider(["hello", "world!"])`
 	"""
@@ -141,6 +145,7 @@ begin
 		values::AbstractVector{T}
 		default::T
 		show_value::Bool
+		formatter::Function
 	end
 	end
 	
@@ -155,12 +160,19 @@ begin
 		end
 	end
 	
-	function Slider(values::AbstractVector{T}; default=missing, show_value=false, max_steps=1_000) where T
+	function Slider(values::AbstractVector{T}; default=missing, show_value::Union{Bool,Function}=false, max_steps=1_000) where {T}
 		new_values = downsample(values, max_steps)
-		Slider(new_values, (default === missing) ? first(new_values) : let
-			d = default
-			d ∈ new_values ? convert(T, d) : closest(new_values, d)
-		end, show_value)
+		formatter = show_value isa Function ? show_value : identity
+		show_value = show_value isa Bool ? show_value : true
+		Slider(
+			new_values,
+			(default === missing) ? first(new_values) : let
+				d = default
+				d ∈ new_values ? convert(T, d) : closest(new_values, d)
+			end,
+			show_value,
+			formatter
+		)
 	end
 	
 	function Base.show(io::IO, m::MIME"text/html", slider::Slider)
@@ -188,7 +200,7 @@ begin
 					"""<script>
 					const input_el = currentScript.previousElementSibling
 					const output_el = currentScript.nextElementSibling
-					const displays = $(string.(slider.values))
+					const displays = $(string.(slider.formatter.(slider.values)))
 
 					let update_output = () => {
 						output_el.value = displays[input_el.valueAsNumber - 1]
@@ -206,7 +218,7 @@ begin
     					font-size: 15px;
     					margin-left: 3px;
     					transform: translateY(-4px);
-    					display: inline-block;'>$(string(slider.default))</output>"""
+    					display: inline-block;'>$(string(slider.formatter(slider.default)))</output>"""
 				) : nothing
 			)"""))
 	end
@@ -734,85 +746,171 @@ ose2
 HTML(repr(MIME"text/html"(), Select([sin, cos])))
   ╠═╡ =#
 
+# ╔═╡ 5d0afb3c-d750-434c-b25b-f1d41e1fc081
+begin
+    struct OldRadio
+        options::Vector{Pair{<:AbstractString,<:Any}}
+        default::Union{Nothing,AbstractString}
+    end
+    OldRadio(options::AbstractVector{<:AbstractString}; default=nothing) = OldRadio([o => o for o in options], default)
+    OldRadio(options::AbstractVector{<:Pair{<:AbstractString,<:Any}}; default=nothing) = OldRadio(options, default)
+
+    function Base.show(io::IO, m::MIME"text/html", radio::OldRadio)
+        groupname = randstring('a':'z')
+
+        h = @htl(
+            """<form>$(
+            map(radio.options) do o
+                @htl(
+                    """<div><input $((
+                        type="radio",
+                        id=(groupname * o.first),
+                        name=groupname,
+                        value=o.first,
+                        checked=(radio.default === o.first),
+                    ))>
+                    <label for=$(groupname * o.first)>
+                    $(o.second)
+                    </label></div>"""
+                )
+            end	
+            )
+            <script>
+                const form = currentScript.parentElement
+                const groupname = $(groupname)
+                const selected_radio = form.querySelector('input[checked]')
+
+                let val = selected_radio?.value
+
+                Object.defineProperty(form, "value", {
+                    get: () => val,
+                    set: (newval) => {
+                        val = newval
+                        const i = document.getElementById(groupname + newval)
+                        if(i != null){
+                            i.checked = true
+                        }
+                    },
+                })
+
+                form.oninput = (e) => {
+                    val = e.target.value
+                    // and bubble upwards
+                }
+            </script>
+            </form>""")
+        show(io, m, h)
+    end
+end
+
 # ╔═╡ 42e9e5ab-7d34-4300-a6c0-47f5cde658d8
 begin
-	local result = begin
-"""A group of radio buttons - the user can choose one of the `options`, an array of `String`s. 
+    local result = begin
+	"""
+	```julia
+	Radio(options::Vector; [default])
+	# or with a custom display value:
+	Radio(options::Vector{Pair}; [default::Any])
+	```
 
-`options` can also be an array of pairs `key::String => value::Any`. The `key` is returned via `@bind`; the `value` is shown.
+	A group of radio buttons - the user can choose one of the `options`. 
+
+	`options` can also be an array of pairs `bound_value::Any => display_value::Any`.
 
 
-# Examples
-`@bind veg Radio(["potato", "carrot"])`
-
-`@bind veg Radio(["potato" => "🥔", "carrot" => "🥕"])`
-
-`@bind veg Radio(["potato" => "🥔", "carrot" => "🥕"], default="carrot")`
-
-"""
-struct Radio
-    options::Vector{Pair{<:AbstractString,<:Any}}
-    default::Union{Nothing, AbstractString}
-end
-	end
-Radio(options::AbstractVector{<:AbstractString}; default=nothing) = Radio([o => o for o in options], default)
-Radio(options::AbstractVector{<:Pair{<:AbstractString,<:Any}}; default=nothing) = Radio(options, default)
-
-function Base.show(io::IO, m::MIME"text/html", radio::Radio)
-    groupname = randstring('a':'z')
+	# Examples
+	```julia 
+	@bind veg Radio(["potato", "carrot"])
+	@bind veg Radio(["potato" => "🥔", "carrot" => "🥕"])
+	@bind veg Radio(["potato" => "🥔", "carrot" => "🥕"], default="carrot")
 		
-	h = @htl(
-		"""<form>$(
-		map(radio.options) do o
-			@htl(
-				"""<div><input $((
-					type="radio",
-					id=(groupname * o.first),
-					name=groupname,
-					value=o.first,
-					checked=(radio.default === o.first),
-				))><label for=$(groupname * o.first)>$(
-					o.second
-				)</label></div>"""
-			)
-        end	
-		)<script>
-		const form = currentScript.parentElement
-		const groupname = $(groupname)
-		
-        const selected_radio = form.querySelector('input[checked]')
-
-		let val = selected_radio?.value
-
-		Object.defineProperty(form, "value", {
-			get: () => val,
-			set: (newval) => {
-				val = newval
-				const i = document.getElementById(groupname + newval)
-				if(i != null){
-					i.checked = true
-				}
-			},
-		})
-
-        form.oninput = (e) => {
-            val = e.target.value
-            // and bubble upwards
-        }
-		</script></form>""")
-	show(io, m, h)
-end
-
-Base.get(radio::Radio) = radio.default
-
-	
-	Bonds.initial_value(select::Radio) = select.default
-	Bonds.possible_values(select::Radio) = 
-		first.(select.options)
-	function Bonds.validate_value(select::Radio, val)
-		val ∈ (first(p) for p in select.options)
+	@bind f Radio([cos => "cosine function", sin => "sine function"]; default=sin)
+	f(π/2)
+	```
+	"""
+	struct Radio
+		options::AbstractVector{Pair}
+		default::Union{Nothing,Any}
 	end
-	result
+    end
+
+    Radio(options::AbstractVector; default=nothing) = Radio([o => o for o in options], default)
+    Radio(options::AbstractVector{<:Pair}; default=nothing) = Radio(options, default)
+
+    function Base.show(io::IO, m::MIME"text/html", radio::Radio)
+        # compat code
+        if !AbstractPlutoDingetjes.is_supported_by_display(io, Bonds.transform_value)
+            compat_element = try
+                OldRadio(radio.options, radio.default)
+            catch
+                HTML("<span>❌ You need to update Pluto to use this PlutoUI element.</span>")
+            end
+            return show(io, m, compat_element)
+        end
+
+        groupname = randstring('a':'z')
+
+        h = @htl(
+            """<form>$(
+            map(enumerate(radio.options)) do (i, o)
+            	@htl(
+            		"""<div><input $((
+            			type="radio",
+            			id=(groupname * "puiradio-$(i)"),
+            			name=groupname,
+            			value="puiradio-$(i)",
+            			checked=(radio.default === o.first),
+            		))>
+                    <label for=$(groupname * "puiradio-$(i)")>
+                    $(o.second)
+                    </label></div>"""
+            	)
+            end
+            )
+            <script>
+                const form = currentScript.parentElement
+                const groupname = $(groupname)
+                const selected_radio = form.querySelector('input[checked]')
+
+                let val = selected_radio?.value
+
+                Object.defineProperty(form, "value", {
+                    get: () => val,
+                    set: (newval) => {
+                        val = newval
+                        const i = document.getElementById(groupname + newval)
+                        if(i != null){
+                            i.checked = true
+                        }
+                    },
+                })
+
+                form.oninput = (e) => {
+                    val = e.target.value
+                    // and bubble upwards
+                }
+            </script>
+            </form>""")
+        show(io, m, h)
+    end
+
+    Base.get(radio::Radio) = radio.default
+
+    Bonds.initial_value(select::Radio) = select.default
+    Bonds.possible_values(select::Radio) = first.(select.options)
+    Bonds.validate_value(select::Radio, val) = val ∈ (first(p) for p in select.options)
+
+    function Bonds.transform_value(radio::Radio, val_from_js::Union{String,Nothing})
+        if val_from_js isa String && startswith(val_from_js, "puiradio-")
+            val_num = tryparse(Int64, @view val_from_js[begin+9:end])
+            radio.options[val_num].first
+        else
+            # and OldRadio was rendered
+            val_from_js
+        end
+    end
+
+    result
 end
 
 # ╔═╡ 04ed1e71-d806-423e-b99c-476ea702feb3
@@ -823,7 +921,7 @@ Radio(["a", "b"]; default="b")
 
 # ╔═╡ 7c4303a1-19be-41a2-a6c7-90146e01401d
 md"""
-nothing checked by defualt, the initial value should be `nothing`
+nothing checked by default, the initial value should be `nothing`
 """
 
 # ╔═╡ d9522557-07e6-4a51-ae92-3abe7a7d2732
@@ -1403,14 +1501,29 @@ bs2 = @bind s2 Slider(30:.5:40; default=38, show_value=true)
 bs3 = @bind s3 Slider([sin, cos, tan], default=cos, show_value=true)
   ╠═╡ =#
 
+# ╔═╡ 62c21b71-e38b-4225-889e-c161393f541e
+# ╠═╡ skip_as_script = true
+#=╠═╡
+bs4 = @bind s4 Slider(
+    range(-π; stop=π, length=800);
+    show_value=x -> "$(round(x, digits=2)) rad"
+)
+  ╠═╡ =#
+
 # ╔═╡ 85900f8c-a1e1-4ffe-a932-b9860749b5ec
 #=╠═╡
-bs2, bs3
+bs2, bs3, bs4
   ╠═╡ =#
 
 # ╔═╡ 7c5765ae-c10a-4677-97a3-848a423cb8b9
 #=╠═╡
-s1, s2, s3
+s1, s2, s3, s4
+  ╠═╡ =#
+
+# ╔═╡ 2302d45d-0d37-427d-9efd-546db71753f4
+# ╠═╡ skip_as_script = true
+#=╠═╡
+bs5 = @bind s5 Slider(0:.5:10; default=38, show_value=x -> x + 0.5)
   ╠═╡ =#
 
 # ╔═╡ f70c1f7b-f3c5-4aff-b39c-add64afbd635
@@ -1656,14 +1769,21 @@ br1 = @bind r1 Radio(["a" => "default", teststr => teststr])
 br1
   ╠═╡ =#
 
-# ╔═╡ c2b3a7a4-8c9e-49cc-b5d0-85ad1c08fd72
-#=╠═╡
-r1
-  ╠═╡ =#
-
 # ╔═╡ 69a94f6a-420a-4587-bbad-1219a390862d
 #=╠═╡
 push!(r1s, r1)
+  ╠═╡ =#
+
+# ╔═╡ 2c52231a-5b74-42d0-886d-ce62ebcd8ea2
+begin
+	a1 = [1, 3, 5]
+	a2 = [2, 4, 6]
+	br2 = @bind r2 Radio([a1 => "odd", a2 => "even"])
+end
+
+# ╔═╡ c2b3a7a4-8c9e-49cc-b5d0-85ad1c08fd72
+#=╠═╡
+r1, r2
   ╠═╡ =#
 
 # ╔═╡ 998a3bd7-2d09-4b3f-8a41-50736b666dea
@@ -1948,6 +2068,8 @@ export Slider, NumberField, Button, LabelButton, CounterButton, CheckBox, TextFi
 # ╠═38d32393-49be-469c-840b-b58c7339a276
 # ╠═75b008b2-afc0-4bd5-9183-e0e0d392a4c5
 # ╠═9df251eb-b4f5-46cc-a4fe-ff2fa670b773
+# ╠═62c21b71-e38b-4225-889e-c161393f541e
+# ╠═2302d45d-0d37-427d-9efd-546db71753f4
 # ╠═85900f8c-a1e1-4ffe-a932-b9860749b5ec
 # ╠═7c5765ae-c10a-4677-97a3-848a423cb8b9
 # ╠═f70c1f7b-f3c5-4aff-b39c-add64afbd635
@@ -2023,15 +2145,17 @@ export Slider, NumberField, Button, LabelButton, CounterButton, CheckBox, TextFi
 # ╠═6459df3f-143f-4d1a-a238-4447b11cc56c
 # ╠═a8ea11dd-703f-428a-9c3f-04114afcd069
 # ╠═f3bef89c-61ac-4dcf-bf47-3824f11db26f
-# ╟─42e9e5ab-7d34-4300-a6c0-47f5cde658d8
+# ╠═42e9e5ab-7d34-4300-a6c0-47f5cde658d8
+# ╟─5d0afb3c-d750-434c-b25b-f1d41e1fc081
 # ╠═57232d88-b74f-4823-be61-8db450c93f5c
 # ╠═04ed1e71-d806-423e-b99c-476ea702feb3
 # ╟─7c4303a1-19be-41a2-a6c7-90146e01401d
 # ╠═a95684ea-4612-45d6-b63f-41c051b53ed8
+# ╠═2c52231a-5b74-42d0-886d-ce62ebcd8ea2
 # ╠═a5612030-0781-4cf1-b8f0-409bd3886154
 # ╠═c2b3a7a4-8c9e-49cc-b5d0-85ad1c08fd72
-# ╠═69a94f6a-420a-4587-bbad-1219a390862d
 # ╠═d9522557-07e6-4a51-ae92-3abe7a7d2732
+# ╠═69a94f6a-420a-4587-bbad-1219a390862d
 # ╟─cc80b7eb-ca09-41ca-8015-933591378437
 # ╠═38a7533e-7b0f-4c55-ade5-5a8d879d14c7
 # ╠═f21db694-2acb-417d-9f4d-0d2400aa067e
